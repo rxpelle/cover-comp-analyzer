@@ -8,6 +8,7 @@ import json
 import logging
 
 from anthropic import Anthropic
+from PIL import Image
 
 from .config import Config
 from .images import image_to_base64, make_thumbnail, get_media_type
@@ -99,6 +100,21 @@ Return ONLY valid JSON (no markdown fences):
 }}"""
 
 
+MAX_API_BYTES = 4_500_000  # Stay under Claude's 5MB limit with margin
+MAX_API_DIMENSION = 2000   # Max width or height to send
+
+
+def _fit_for_api(img):
+    """Resize image if needed to stay within Claude Vision API limits."""
+    # Downscale if either dimension exceeds max
+    if img.width > MAX_API_DIMENSION or img.height > MAX_API_DIMENSION:
+        ratio = min(MAX_API_DIMENSION / img.width, MAX_API_DIMENSION / img.height)
+        new_w = int(img.width * ratio)
+        new_h = int(img.height * ratio)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+    return img
+
+
 def _call_claude_vision(images_with_labels, prompt, max_tokens=2000):
     """Send images to Claude Vision and get structured JSON response.
 
@@ -116,13 +132,15 @@ def _call_claude_vision(images_with_labels, prompt, max_tokens=2000):
 
     content = []
     for label, img in images_with_labels:
-        b64 = image_to_base64(img)
+        # Resize if image would exceed Claude's 5MB limit
+        send_img = _fit_for_api(img)
+        b64 = image_to_base64(send_img, format='JPEG')
         content.append({'type': 'text', 'text': f'--- {label} ---'})
         content.append({
             'type': 'image',
             'source': {
                 'type': 'base64',
-                'media_type': get_media_type('PNG'),
+                'media_type': get_media_type('JPEG'),
                 'data': b64,
             },
         })
